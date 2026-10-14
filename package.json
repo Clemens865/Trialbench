@@ -1,0 +1,54 @@
+{
+  "name": "trialbench",
+  "version": "0.1.0",
+  "description": "Statistically honest evals for LLM features, tool-using agents and coding agents",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "dev": "tsc -p tsconfig.json --watch",
+    "prepare": "npm run build"
+  },
+  "license": "MIT",
+  "type": "module",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.133.0",
+    "commander": "^15.0.0",
+    "yaml": "^2.9.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.4"
+  },
+  "bin": {
+    "trialbench": "dist/cli.js"
+  },
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "templates",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Clemens865/Trialbench.git"
+  },
+  "homepage": "https://github.com/Clemens865/Trialbench#readme",
+  "keywords": [
+    "evals",
+    "llm",
+    "llm-as-judge",
+    "agents",
+    "claude",
+    "testing",
+    "ci",
+    "statistics"
+  ]
+}

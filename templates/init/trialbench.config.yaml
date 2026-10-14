@@ -1,0 +1,15 @@
+# trialbench configuration. Paths are relative to this file.
+judge:
+  provider: auto            # auto | anthropic | claude-cli  (auto: Anthropic API if credentials exist, else your `claude` login)
+  model: claude-sonnet-5-5  # best quality per $ in our test (see README); pin it, re-validate judges if you change it
+  # effort: medium          # low | medium | high | xhigh | max
+
+rubricsDir: rubrics
+runsDir: runs               # gitignored: full trial records
+cacheDir: .trialbench-cache # gitignored: judge response cache
+
+defaults:
+  trials: 1                 # use 3-5 for agents or anything non-deterministic
+  concurrency: 4
+  timeoutMs: 120000
+  retries: 2                # infrastructure errors only (timeouts, 5xx); failures are never retried

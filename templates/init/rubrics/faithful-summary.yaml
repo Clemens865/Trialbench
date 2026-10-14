@@ -1,0 +1,17 @@
+# One criterion per rubric. Write PASS/FAIL as concrete, observable conditions,
+# ideally taken from failures you actually saw while reading outputs.
+id: faithful-summary
+version: 1
+name: Summary is faithful to the source
+pass: >
+  Every factual claim in the summary (numbers, durations, prices, conditions) appears in
+  the input or follows directly from it, and no condition from the input is reversed.
+fail: >
+  The summary states a number, duration, price or condition that is not in the input,
+  changes one that is, or reverses a condition (e.g. "sale items can be returned").
+outOfScope: Brevity, tone, formatting and whether every detail was included.
+# fewShots:   # add 2-4 labeled examples from your train split once you have human labels
+#   - input: "..."
+#     output: "..."
+#     critique: "..."
+#     verdict: FAIL

@@ -1,0 +1,43 @@
+suite: example
+description: Example suite. Replace the target with your own code (see README.md).
+
+# How trialbench calls your code. The case JSON arrives on stdin:
+#   {"caseId": "...", "trial": 1, "input": ...}
+# and your program prints {"output": ...} (or plain text) on stdout.
+target:
+  type: exec
+  cmd: node targets/example-target.mjs
+  # Other options:
+  #   type: http      url: http://localhost:3000/eval
+  #   type: function  module: ../src/summarize.ts   export: evalTarget
+
+trials: 1
+
+# Graders applied to every case. Deterministic ones are free and run first;
+# judges only run when every deterministic gate passed.
+graders:
+  - { type: max_length, chars: 300 }
+  - { type: not_contains, values: ["as an AI language model"], ignoreCase: true }
+
+cases:
+  - id: refund-policy
+    input: "Customers can return items within 30 days for a full refund. Sale items are final."
+    reference: "30-day full refund; sale items cannot be returned."
+    tags: [policy]
+    graders:
+      - { type: contains, values: ["30"] }
+      - { type: judge, rubric: faithful-summary }
+
+  - id: shipping
+    input: "Orders ship within 2 business days. Express shipping costs 15 EUR and arrives next day."
+    reference: "Ships in 2 business days; express is 15 EUR, next-day."
+    tags: [policy]
+    graders:
+      - { type: contains, values: ["2"] }
+      - { type: judge, rubric: faithful-summary }
+
+  - id: empty-input
+    input: ""
+    tags: [edge-case]
+    graders:
+      - { type: regex, pattern: "(?i)nothing|empty|no (text|content)" }

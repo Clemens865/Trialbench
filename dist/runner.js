@@ -1,0 +1,205 @@
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { buildRequest, callTarget } from "./adapters.js";
+import { loadRubric } from "./config.js";
+import { combine, grade, graderId, isDeterministic } from "./graders.js";
+import { Judge } from "./judge.js";
+import { mapLimit, runCommand, sha256, shortHash, TargetError } from "./util.js";
+export const HARNESS_VERSION = (() => {
+    try {
+        const pkg = join(dirname(fileURLToPath(import.meta.url)), "..", "package.json");
+        return JSON.parse(readFileSync(pkg, "utf8")).version;
+    }
+    catch {
+        return "0.0.0";
+    }
+})();
+export function runDirFor(config, suite, runId) {
+    return join(config.runsDir, suite, runId);
+}
+export function newRunId() {
+    const ts = new Date().toISOString().replace(/[-:]/g, "").replace(/\..+/, "").replace("T", "-");
+    return `${ts}-${shortHash(Math.random()).slice(0, 6)}`;
+}
+async function gitCommit(cwd) {
+    try {
+        const r = await runCommand("git rev-parse --short HEAD && git status --porcelain | head -1", { cwd, timeoutMs: 5000 });
+        if (r.code !== 0)
+            return undefined;
+        const [commit, dirty] = r.stdout.split("\n");
+        return commit ? `${commit}${dirty ? "-dirty" : ""}` : undefined;
+    }
+    catch {
+        return undefined;
+    }
+}
+export function readTrials(runDir) {
+    const file = join(runDir, "trials.jsonl");
+    if (!existsSync(file))
+        return [];
+    return readFileSync(file, "utf8")
+        .split("\n")
+        .filter((l) => l.trim())
+        .map((l) => JSON.parse(l));
+}
+export function readMeta(runDir) {
+    return JSON.parse(readFileSync(join(runDir, "meta.json"), "utf8"));
+}
+export async function runSuite(suite, config, opts = {}) {
+    const suiteDir = dirname(suite.file);
+    const trials = opts.trials ?? suite.trials ?? config.defaults.trials;
+    const concurrency = opts.concurrency ?? suite.concurrency ?? config.defaults.concurrency;
+    const retries = suite.retries ?? config.defaults.retries;
+    const timeoutMs = suite.timeoutMs ?? config.defaults.timeoutMs;
+    const runId = opts.resumeRunId ?? newRunId();
+    const runDir = runDirFor(config, suite.suite, runId);
+    mkdirSync(runDir, { recursive: true });
+    const trialsFile = join(runDir, "trials.jsonl");
+    const previous = opts.resumeRunId ? readTrials(runDir).filter((r) => r.termination !== "infra_error") : [];
+    const done = new Set(previous.map((r) => `${r.caseId}\u0000${r.trial}`));
+    if (opts.resumeRunId) {
+        // Rewrite without the infra-error lines we're about to retry, so each (case, trial) appears once.
+        writeFileSync(trialsFile, previous.map((r) => JSON.stringify(r) + "\n").join(""));
+    }
+    const meta = opts.resumeRunId
+        ? readMeta(runDir)
+        : {
+            schemaVersion: 1,
+            runId,
+            suite: suite.suite,
+            suiteFile: suite.file,
+            startedAt: new Date().toISOString(),
+            harnessVersion: HARNESS_VERSION,
+            trials,
+            judge: config.judge,
+            ...(opts.label ? { label: opts.label } : {}),
+        };
+    if (!opts.resumeRunId) {
+        const commit = await gitCommit(suiteDir);
+        if (commit)
+            meta.gitCommit = commit;
+        writeFileSync(join(runDir, "meta.json"), JSON.stringify(meta, null, 2));
+    }
+    const cases = suite.cases.filter((c) => (!opts.tags?.length || c.tags?.some((t) => opts.tags.includes(t))) && (!opts.caseIds?.length || opts.caseIds.includes(c.id)));
+    const jobs = [];
+    for (const c of cases)
+        for (let t = 1; t <= trials; t++)
+            if (!done.has(`${c.id}\u0000${t}`))
+                jobs.push({ c, trial: t });
+    const judge = opts.noJudge ? undefined : new Judge(config.judge, opts.noCache ? undefined : config.cacheDir);
+    const rubricCache = new Map();
+    const getRubric = (id) => {
+        if (!rubricCache.has(id))
+            rubricCache.set(id, loadRubric(id, config));
+        return rubricCache.get(id);
+    };
+    // Fail fast on missing rubrics instead of discovering them mid-run.
+    for (const c of cases)
+        for (const g of [...(suite.graders ?? []), ...(c.graders ?? [])])
+            if (g.type === "judge")
+                getRubric(g.rubric);
+    const targetHash = shortHash(suite.target);
+    const total = jobs.length + previous.length;
+    let completed = previous.length;
+    const records = [...previous];
+    await mapLimit(jobs, concurrency, async ({ c, trial }) => {
+        const graders = [...(suite.graders ?? []), ...(c.graders ?? [])];
+        const startedAt = new Date();
+        let attempts = 0;
+        let result;
+        let termination = "completed";
+        let error;
+        for (;;) {
+            attempts++;
+            try {
+                result = await callTarget(suite.target, buildRequest(c, trial), config.root, timeoutMs);
+                break;
+            }
+            catch (err) {
+                if (err instanceof TargetError) {
+                    termination = "target_error";
+                    error = err.message;
+                    break;
+                }
+                if (attempts > retries) {
+                    termination = "infra_error";
+                    error = err.message;
+                    break;
+                }
+                await new Promise((r) => setTimeout(r, 500 * 2 ** (attempts - 1)));
+            }
+        }
+        let grades = [];
+        let verdict;
+        let score;
+        if (termination === "completed" && result) {
+            const ctx = { case: c, result, config, suiteDir: config.root, ...(judge ? { judge } : {}), loadRubric: getRubric };
+            const indexed = graders.map((g, i) => ({ g, i }));
+            const cheap = indexed.filter(({ g }) => isDeterministic(g));
+            const costly = indexed.filter(({ g }) => !isDeterministic(g));
+            const cheapGrades = await Promise.all(cheap.map(({ g, i }) => grade(g, i, ctx)));
+            const failedGate = suite.threshold === undefined && cheapGrades.some((g) => g.gate && g.verdict === "FAIL");
+            const costlyGrades = await Promise.all(costly.map(({ g, i }) => failedGate || !judge
+                ? Promise.resolve({
+                    graderId: graderId(g, i),
+                    type: g.type,
+                    weight: g.weight ?? 1,
+                    gate: g.gate ?? true,
+                    verdict: "SKIPPED",
+                    evidence: failedGate ? "skipped: a deterministic gate already failed" : "skipped: judges disabled",
+                })
+                : grade(g, i, ctx)));
+            // Keep the suite's grader order in the record.
+            const byIndex = new Map();
+            cheap.forEach(({ i }, k) => byIndex.set(i, cheapGrades[k]));
+            costly.forEach(({ i }, k) => byIndex.set(i, costlyGrades[k]));
+            grades = indexed.map(({ i }) => byIndex.get(i));
+            ({ verdict, score } = combine(grades, suite.threshold));
+        }
+        else if (termination === "target_error") {
+            verdict = "FAIL";
+            score = 0;
+        }
+        else {
+            verdict = "ERROR";
+        }
+        const record = {
+            schemaVersion: 1,
+            runId,
+            suite: suite.suite,
+            caseId: c.id,
+            trial,
+            ...(c.cluster ? { cluster: c.cluster } : {}),
+            ...(c.tags ? { tags: c.tags } : {}),
+            hashes: {
+                case: shortHash({ input: c.input, reference: c.reference ?? null }),
+                target: targetHash,
+                graders: shortHash(graders),
+                harness: HARNESS_VERSION,
+            },
+            startedAt: startedAt.toISOString(),
+            durationMs: Date.now() - startedAt.getTime(),
+            termination,
+            attempts,
+            ...(error ? { error } : {}),
+            ...(result ? { result } : {}),
+            grades,
+            ...(score !== undefined ? { score } : {}),
+            verdict,
+        };
+        appendFileSync(trialsFile, JSON.stringify(record) + "\n");
+        records.push(record);
+        completed++;
+        opts.onTrial?.(record, completed, total);
+    });
+    meta.finishedAt = new Date().toISOString();
+    writeFileSync(join(runDir, "meta.json"), JSON.stringify(meta, null, 2));
+    records.sort((a, b) => (a.caseId === b.caseId ? a.trial - b.trial : a.caseId < b.caseId ? -1 : 1));
+    return { runId, runDir, meta, records };
+}
+/** Hash that identifies a suite's cases; compare runs only when it matches. */
+export function datasetHash(records) {
+    const perCase = [...new Map(records.map((r) => [r.caseId, r.hashes.case])).entries()].sort();
+    return sha256(perCase).slice(0, 12);
+}

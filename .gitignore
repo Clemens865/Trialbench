@@ -1,0 +1,4 @@
+node_modules/
+.trialbench-cache/
+*.tgz
+# dist/ is committed so `npm install github:Clemens865/Trialbench` works without a build step
