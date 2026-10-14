@@ -46,6 +46,8 @@ npm install --save-dev github:Clemens865/Trialbench
 npx trialbench --help
 ```
 
+npm may print an `install-scripts` warning when installing from GitHub. You can ignore it: the package ships prebuilt in `dist/`, so nothing needs to run.
+
 For the LLM judge you need **one** of:
 
 - an Anthropic API key (`ANTHROPIC_API_KEY`) or an `ant auth login` profile, **or**
