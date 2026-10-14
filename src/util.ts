@@ -63,12 +63,22 @@ export function runCommand(
   opts: { cwd?: string; env?: Record<string, string>; input?: string; timeoutMs?: number } = {},
 ): Promise<CommandResult> {
   return new Promise((resolvePromise, reject) => {
+    // detached: the shell and everything it starts form one process group, so a timeout can
+    // kill the real program (e.g. `claude`), not just the shell wrapping it.
     const child = spawn(cmd, {
       shell: true,
+      detached: true,
       cwd: opts.cwd,
       env: { ...process.env, ...opts.env },
       stdio: ["pipe", "pipe", "pipe"],
     });
+    const killGroup = () => {
+      try {
+        if (child.pid) process.kill(-child.pid, "SIGKILL");
+      } catch {
+        child.kill("SIGKILL");
+      }
+    };
     let stdout = "";
     let stderr = "";
     let timedOut = false;
@@ -76,7 +86,7 @@ export function runCommand(
       opts.timeoutMs && opts.timeoutMs > 0
         ? setTimeout(() => {
             timedOut = true;
-            child.kill("SIGKILL");
+            killGroup();
           }, opts.timeoutMs)
         : undefined;
     child.stdout.on("data", (d: Buffer) => (stdout += d.toString()));

@@ -1,7 +1,7 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { datasetHash } from "./runner.js";
-import { summarize, wilson } from "./stats.js";
+import { correctForJudge, summarize, wilson } from "./stats.js";
 /** Item-level pass rates. Only PASS/FAIL trials count; UNKNOWN/ERROR are excluded and reported separately. */
 export function perItemScores(records) {
     const items = new Map();
@@ -177,4 +177,38 @@ export function formatMarkdown(a) {
 export function writeReports(runDir, a) {
     writeFileSync(join(runDir, "summary.json"), JSON.stringify(a, null, 2));
     writeFileSync(join(runDir, "report.md"), formatMarkdown(a));
+}
+/**
+ * For each judge grader whose rubric has a human-label validation, the pass rate corrected for the
+ * judge's measured error (Rogan-Gladen). Warns when the validation is stale (rubric or model changed).
+ */
+export function judgeCorrections(records, readValidationFor) {
+    const lines = [];
+    const byGrader = new Map();
+    for (const r of records)
+        for (const g of r.grades) {
+            if (!g.judge?.rubric || (g.verdict !== "PASS" && g.verdict !== "FAIL"))
+                continue;
+            const e = byGrader.get(g.graderId) ?? { rubric: g.judge.rubric, version: g.judge.rubricVersion, model: g.judge.model, pass: 0, n: 0 };
+            e.n++;
+            if (g.verdict === "PASS")
+                e.pass++;
+            byGrader.set(g.graderId, e);
+        }
+    for (const [id, e] of byGrader) {
+        const v = readValidationFor(e.rubric);
+        if (!v?.test) {
+            lines.push(`    ${id.padEnd(28)} judge not validated against human labels yet (trialbench label / judge-check)`);
+            continue;
+        }
+        if (v.rubricVersion !== e.version || v.model !== e.model) {
+            lines.push(`    ${id.padEnd(28)} validation is stale (was ${v.model} on v${v.rubricVersion}; now ${e.model} on v${e.version}): re-run judge-check`);
+            continue;
+        }
+        const c = correctForJudge(e.pass, e.n, v.test);
+        lines.push(c.valid
+            ? `    ${id.padEnd(28)} raw ${pct(c.raw)} → corrected ${pct(c.corrected)} ${ivl(c.ci)}  (judge TPR ${pct(v.test.tpr, 0)}, TNR ${pct(v.test.tnr, 0)}${v.gateEligible ? "" : ", NOT gate-eligible"})`
+            : `    ${id.padEnd(28)} judge too close to random to correct (TPR ${pct(v.test.tpr, 0)}, TNR ${pct(v.test.tnr, 0)})`);
+    }
+    return lines.length ? ["", "  Judge accuracy (vs your labels)", ...lines] : [];
 }

@@ -18,6 +18,8 @@ export declare const EXIT: {
     readonly INFRA: 2;
 };
 export declare function baselinePath(config: Config, suite: string, name?: string): string;
+/** Run ids of a suite, newest first. */
+export declare function listRunIds(config: Config, suite: string): string[];
 export declare function latestRunId(config: Config, suite: string): string | undefined;
 export declare function loadRun(config: Config, suite: string, runId?: string): {
     runId: string;

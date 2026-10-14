@@ -3,6 +3,10 @@ import type { Case, Config, GradeResult, GraderSpec, Rubric, TargetResult, Verdi
 export interface GradeContext {
     case: Case;
     result: TargetResult;
+    /** Wall-clock of the target call, for the budget grader. */
+    durationMs?: number;
+    /** Workspace env, applied to command graders. */
+    env?: Record<string, string>;
     config: Config;
     suiteDir: string;
     judge?: Judge;
@@ -77,8 +81,54 @@ export declare const isDeterministic: (g: GraderSpec) => g is {
     id?: string;
     weight?: number;
     gate?: boolean;
+} | {
+    type: "file_exists";
+    path: string;
+    min?: number;
+    max?: number;
+    id?: string;
+    weight?: number;
+    gate?: boolean;
+} | {
+    type: "file_contains";
+    path: string;
+    values?: string[];
+    pattern?: string;
+    all?: boolean;
+    ignoreCase?: boolean;
+    not?: boolean;
+    id?: string;
+    weight?: number;
+    gate?: boolean;
+} | {
+    type: "files_changed";
+    allow?: string[];
+    forbid?: string[];
+    min?: number;
+    max?: number;
+    id?: string;
+    weight?: number;
+    gate?: boolean;
+} | {
+    type: "tool_sequence";
+    names: string[];
+    mode?: "exact" | "in_order" | "any_order";
+    id?: string;
+    weight?: number;
+    gate?: boolean;
+} | {
+    type: "budget";
+    maxToolCalls?: number;
+    maxTurns?: number;
+    maxCostUsd?: number;
+    maxDurationMs?: number;
+    id?: string;
+    weight?: number;
+    gate?: boolean;
 };
 export declare function graderId(g: GraderSpec, index: number): string;
+/** RegExp that also accepts a leading Python/PCRE-style inline flag group like (?i) or (?is). */
+export declare function compileRegex(pattern: string, flags?: string): RegExp;
 export declare function grade(spec: GraderSpec, index: number, ctx: GradeContext): Promise<GradeResult>;
 /**
  * Combine grades into one trial verdict.

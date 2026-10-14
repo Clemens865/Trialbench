@@ -59,3 +59,8 @@ export declare function headline(a: RunAnalysis): string;
 export declare function formatText(a: RunAnalysis): string;
 export declare function formatMarkdown(a: RunAnalysis): string;
 export declare function writeReports(runDir: string, a: RunAnalysis): void;
+/**
+ * For each judge grader whose rubric has a human-label validation, the pass rate corrected for the
+ * judge's measured error (Rogan-Gladen). Warns when the validation is stale (rubric or model changed).
+ */
+export declare function judgeCorrections(records: readonly TrialRecord[], readValidationFor: (rubric: string) => import("./judgecheck.js").JudgeValidation | undefined): string[];

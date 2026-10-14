@@ -14,6 +14,8 @@ export interface RunOptions {
     noJudge?: boolean;
     /** Bypass the judge cache. */
     noCache?: boolean;
+    /** Keep every trial's workspace on disk (paths are in the trial records). */
+    keepWorkspaces?: boolean;
     onTrial?: (record: TrialRecord, done: number, total: number) => void;
 }
 export interface RunResult {

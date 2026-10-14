@@ -6,6 +6,7 @@ import { loadRubric } from "./config.js";
 import { combine, grade, graderId, isDeterministic } from "./graders.js";
 import { Judge } from "./judge.js";
 import { mapLimit, runCommand, sha256, shortHash, TargetError } from "./util.js";
+import { cleanupWorkspace, finishWorkspace, prepareWorkspace, workspaceEnv } from "./workspace.js";
 export const HARNESS_VERSION = (() => {
     try {
         const pkg = join(dirname(fileURLToPath(import.meta.url)), "..", "package.json");
@@ -110,18 +111,38 @@ export async function runSuite(suite, config, opts = {}) {
         let result;
         let termination = "completed";
         let error;
+        const wsSpec = suite.workspace || c.workspace ? { ...suite.workspace, ...c.workspace } : undefined;
+        let ws;
+        const attemptErrors = [];
         for (;;) {
             attempts++;
             try {
-                result = await callTarget(suite.target, buildRequest(c, trial), config.root, timeoutMs);
+                if (wsSpec)
+                    ws = await prepareWorkspace(wsSpec, config.root, c.id);
+                result = await callTarget(c.target ?? suite.target, buildRequest(c, trial, ws?.dir, workspaceEnv(wsSpec)), config.root, timeoutMs);
+                if (ws && wsSpec)
+                    result.workspace = await finishWorkspace(ws, wsSpec, config.root);
                 break;
             }
             catch (err) {
                 if (err instanceof TargetError) {
                     termination = "target_error";
                     error = err.message;
+                    // Even a failed agent may have changed files worth seeing.
+                    if (ws && wsSpec) {
+                        try {
+                            result = { output: "", workspace: await finishWorkspace(ws, wsSpec, config.root) };
+                        }
+                        catch {
+                            /* best effort */
+                        }
+                    }
                     break;
                 }
+                if (ws && !(wsSpec?.keep || opts.keepWorkspaces))
+                    cleanupWorkspace(ws.dir);
+                ws = undefined;
+                attemptErrors.push(`attempt ${attempts}: ${err.message}`.slice(0, 500));
                 if (attempts > retries) {
                     termination = "infra_error";
                     error = err.message;
@@ -130,11 +151,12 @@ export async function runSuite(suite, config, opts = {}) {
                 await new Promise((r) => setTimeout(r, 500 * 2 ** (attempts - 1)));
             }
         }
+        const targetMs = Date.now() - startedAt.getTime();
         let grades = [];
         let verdict;
         let score;
         if (termination === "completed" && result) {
-            const ctx = { case: c, result, config, suiteDir: config.root, ...(judge ? { judge } : {}), loadRubric: getRubric };
+            const ctx = { case: c, result, config, suiteDir: config.root, durationMs: targetMs, env: workspaceEnv(wsSpec), ...(judge ? { judge } : {}), loadRubric: getRubric };
             const indexed = graders.map((g, i) => ({ g, i }));
             const cheap = indexed.filter(({ g }) => isDeterministic(g));
             const costly = indexed.filter(({ g }) => !isDeterministic(g));
@@ -155,6 +177,18 @@ export async function runSuite(suite, config, opts = {}) {
             cheap.forEach(({ i }, k) => byIndex.set(i, cheapGrades[k]));
             costly.forEach(({ i }, k) => byIndex.set(i, costlyGrades[k]));
             grades = indexed.map(({ i }) => byIndex.get(i));
+            if (wsSpec?.protect?.length && result.workspace) {
+                const t = result.workspace.tampered;
+                grades.unshift({
+                    graderId: "tamper",
+                    type: "tamper",
+                    verdict: t.length ? "FAIL" : "PASS",
+                    score: t.length ? 0 : 1,
+                    weight: 1,
+                    gate: true,
+                    evidence: t.length ? `agent modified protected files: ${t.join(", ")}` : "protected files untouched",
+                });
+            }
             ({ verdict, score } = combine(grades, suite.threshold));
         }
         else if (termination === "target_error") {
@@ -183,11 +217,14 @@ export async function runSuite(suite, config, opts = {}) {
             termination,
             attempts,
             ...(error ? { error } : {}),
+            ...(attemptErrors.length && termination !== "infra_error" ? { attemptErrors } : termination === "infra_error" && attemptErrors.length > 1 ? { attemptErrors: attemptErrors.slice(0, -1) } : {}),
             ...(result ? { result } : {}),
             grades,
             ...(score !== undefined ? { score } : {}),
             verdict,
         };
+        if (ws && !(wsSpec?.keep || opts.keepWorkspaces))
+            cleanupWorkspace(ws.dir);
         appendFileSync(trialsFile, JSON.stringify(record) + "\n");
         records.push(record);
         completed++;

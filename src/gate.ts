@@ -23,12 +23,17 @@ export function baselinePath(config: Config, suite: string, name = "main"): stri
   return join(config.root, "baselines", suite, `${name}.json`);
 }
 
-export function latestRunId(config: Config, suite: string): string | undefined {
+/** Run ids of a suite, newest first. */
+export function listRunIds(config: Config, suite: string): string[] {
   const dir = join(config.runsDir, suite);
-  if (!existsSync(dir)) return undefined;
+  if (!existsSync(dir)) return [];
   const runs = readdirSync(dir).filter((d) => existsSync(join(dir, d, "meta.json")));
   runs.sort((a, b) => statSync(join(dir, b, "meta.json")).mtimeMs - statSync(join(dir, a, "meta.json")).mtimeMs);
-  return runs[0];
+  return runs;
+}
+
+export function latestRunId(config: Config, suite: string): string | undefined {
+  return listRunIds(config, suite)[0];
 }
 
 export function loadRun(config: Config, suite: string, runId?: string): { runId: string; analysis: RunAnalysis; items: Map<string, number> } {

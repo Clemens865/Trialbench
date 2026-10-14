@@ -7,13 +7,17 @@ export const EXIT = { PASS: 0, FAIL: 1, INFRA: 2 };
 export function baselinePath(config, suite, name = "main") {
     return join(config.root, "baselines", suite, `${name}.json`);
 }
-export function latestRunId(config, suite) {
+/** Run ids of a suite, newest first. */
+export function listRunIds(config, suite) {
     const dir = join(config.runsDir, suite);
     if (!existsSync(dir))
-        return undefined;
+        return [];
     const runs = readdirSync(dir).filter((d) => existsSync(join(dir, d, "meta.json")));
     runs.sort((a, b) => statSync(join(dir, b, "meta.json")).mtimeMs - statSync(join(dir, a, "meta.json")).mtimeMs);
-    return runs[0];
+    return runs;
+}
+export function latestRunId(config, suite) {
+    return listRunIds(config, suite)[0];
 }
 export function loadRun(config, suite, runId) {
     const id = runId ?? latestRunId(config, suite);

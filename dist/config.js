@@ -21,12 +21,54 @@ const GraderSchema = z.discriminatedUnion("type", [
     z.object({ type: z.literal("tool_used"), name: z.string(), min: z.number().int().optional(), max: z.number().int().optional(), ...common }),
     z.object({ type: z.literal("tool_not_used"), name: z.string(), ...common }),
     z.object({ type: z.literal("command"), cmd: z.string(), cwd: z.string().optional(), timeoutMs: z.number().int().positive().optional(), ...common }),
-    z.object({ type: z.literal("judge"), rubric: z.string(), model: z.string().optional(), ...pathField, ...common }),
+    z.object({ type: z.literal("judge"), rubric: z.string(), model: z.string().optional(), file: z.string().optional(), ...pathField, ...common }),
+    z.object({ type: z.literal("file_exists"), path: z.string(), min: z.number().int().min(0).optional(), max: z.number().int().optional(), ...common }),
+    z.object({
+        type: z.literal("file_contains"), path: z.string(), values: z.array(z.string()).optional(), pattern: z.string().optional(),
+        all: z.boolean().optional(), ignoreCase: z.boolean().optional(), not: z.boolean().optional(), ...common,
+    }).refine((g) => g.values?.length || g.pattern, "file_contains needs values or pattern"),
+    z.object({ type: z.literal("files_changed"), allow: z.array(z.string()).optional(), forbid: z.array(z.string()).optional(), min: z.number().int().min(0).optional(), max: z.number().int().optional(), ...common }),
+    z.object({ type: z.literal("tool_sequence"), names: z.array(z.string()).min(1), mode: z.enum(["exact", "in_order", "any_order"]).optional(), ...common }),
+    z.object({
+        type: z.literal("budget"), maxToolCalls: z.number().int().positive().optional(), maxTurns: z.number().int().positive().optional(),
+        maxCostUsd: z.number().positive().optional(), maxDurationMs: z.number().int().positive().optional(), ...common,
+    }),
 ]);
+const WorkspaceSchema = z.object({
+    template: z.string().optional(),
+    git: z.object({ repo: z.string(), ref: z.string().optional(), stripFutureHistory: z.boolean().optional() }).optional(),
+    remove: z.array(z.string()).optional(),
+    setup: z.string().optional(),
+    setupTimeoutMs: z.number().int().positive().optional(),
+    hidden: z.array(z.object({ from: z.string(), to: z.string().optional() })).optional(),
+    protect: z.array(z.string()).optional(),
+    protectNew: z.boolean().optional(),
+    keep: z.boolean().optional(),
+    parentDir: z.string().optional(),
+    env: z.record(z.string(), z.string()).optional(),
+}).refine((w) => !(w.template && w.git), "workspace: use either template or git, not both");
 const TargetSchema = z.discriminatedUnion("type", [
     z.object({ type: z.literal("exec"), cmd: z.string(), cwd: z.string().optional(), env: z.record(z.string(), z.string()).optional(), timeoutMs: z.number().int().positive().optional() }),
     z.object({ type: z.literal("http"), url: z.string().url(), method: z.enum(["POST", "PUT"]).optional(), headers: z.record(z.string(), z.string()).optional(), timeoutMs: z.number().int().positive().optional() }),
     z.object({ type: z.literal("function"), module: z.string(), export: z.string().optional(), timeoutMs: z.number().int().positive().optional() }),
+    z.object({ type: z.literal("patch"), patch: z.string(), timeoutMs: z.number().int().positive().optional() }),
+    z.object({ type: z.literal("noop"), timeoutMs: z.number().int().positive().optional() }),
+    z.object({
+        type: z.literal("claude-code"),
+        model: z.string().optional(),
+        effort: z.enum(["low", "medium", "high", "xhigh", "max"]).optional(),
+        prompt: z.string().optional(),
+        appendSystemPrompt: z.string().optional(),
+        appendSystemPromptCmd: z.string().optional(),
+        allowedTools: z.array(z.string()).optional(),
+        disallowedTools: z.array(z.string()).optional(),
+        permissionMode: z.enum(["default", "acceptEdits", "bypassPermissions", "plan"]).optional(),
+        settingSources: z.string().optional(),
+        maxBudgetUsd: z.number().positive().optional(),
+        extraArgs: z.array(z.string()).optional(),
+        env: z.record(z.string(), z.string()).optional(),
+        timeoutMs: z.number().int().positive().optional(),
+    }),
 ]);
 const CaseSchema = z.object({
     id: z.string().regex(/^[\w.\-:/]+$/, "case ids may only contain letters, digits and . - _ : /"),
@@ -36,6 +78,8 @@ const CaseSchema = z.object({
     cluster: z.string().optional(),
     graders: z.array(GraderSchema).optional(),
     metadata: z.record(z.string(), z.unknown()).optional(),
+    workspace: WorkspaceSchema.optional(),
+    target: TargetSchema.optional(),
 });
 const SuiteSchema = z.object({
     suite: z.string(),
@@ -47,6 +91,7 @@ const SuiteSchema = z.object({
     retries: z.number().int().min(0).optional(),
     threshold: z.number().min(0).max(1).optional(),
     graders: z.array(GraderSchema).optional(),
+    workspace: WorkspaceSchema.optional(),
     cases: z.array(CaseSchema).min(1),
 });
 const ConfigSchema = z.object({

@@ -264,6 +264,67 @@ judge:
 
 Use a stronger judge (`claude-opus-5-5`) for subtle criteria. Agreement with Opus is not the same as being right, though: the real test is agreement with **your own** labels (see the roadmap).
 
+
+---
+
+## Agents and coding agents
+
+Agents change things: files, repos, data. For those, give every trial a **fresh workspace** and grade what the agent left behind.
+
+```yaml
+suite: chat-agent
+target:
+  type: claude-code                 # runs `claude -p` inside the trial's workspace
+  model: sonnet
+  allowedTools: [Read, Write, Edit, Glob]
+  appendSystemPromptCmd: node targets/print-system-prompt.mjs   # your agent's real system prompt
+  maxBudgetUsd: 1
+workspace:
+  template: fixtures/starting-files   # or: git: { repo: .., ref: <commit> }   or: {} for an empty folder
+  hidden: [{ from: hidden-tests }]    # copied in only AFTER the agent stops
+  protect: ["tests/**"]               # existing files the agent must not touch (checked automatically)
+trials: 3
+cases:
+  - id: landing-page
+    input: "Make a one-page landing page for a bakery with three products and opening hours."
+    graders:
+      - { type: file_exists, path: "Artifacts/*.html", min: 1, max: 1 }
+      - { type: file_contains, path: "Artifacts/*.html", pattern: "<script[^>]+src=[\"']https?:", not: true }
+      - { type: judge, rubric: artifact-fulfills-request, file: "Artifacts/*.html" }   # judge the FILE
+      - { type: budget, maxToolCalls: 8, gate: false }
+```
+
+**The `claude-code` target** records every tool call (name, arguments, result, errors), turns, tokens and cost. Hooks are disabled (a Stop hook can replace the answer under `-p`), and only project settings load by default (`settingSources: project`): your repo's `CLAUDE.md` applies, your personal plugins don't skew the result. Options: `model`, `effort`, `prompt` (template with `{{input}}`), `appendSystemPrompt`, `appendSystemPromptCmd`, `allowedTools`, `disallowedTools`, `permissionMode` (default `acceptEdits`), `settingSources`, `maxBudgetUsd`, `extraArgs`, `env`. An agent that runs out of time or budget **failed** the task; only a CLI that never produced a result counts as an infrastructure error. Any other agent works through `exec`: your script gets the workspace path in the request (`workspace`) and in `TRIALBENCH_WORKSPACE`.
+
+**Workspace options:** `template` (copy a folder), `git` (fast local clone at `ref`; refs to later commits are removed so the agent can't read the answer), `remove` (delete paths after copying), `setup` (runs once per trial; its changes don't count as the agent's), `hidden`, `protect`, `protectNew` (also forbid *new* files matching `protect`), `env` (for setup, the agent and checks, e.g. a shared `CARGO_TARGET_DIR`), `keep`. Cases can override any of these. Workspaces are deleted after each trial unless you pass `--keep-workspaces`.
+
+| Agent grader | Passes when |
+|---|---|
+| `file_exists` `path` (`min`, `max`) | that many files match the glob (`*`, `**`, `?`) |
+| `file_contains` `path`, `values` and/or `pattern` (`all`, `ignoreCase`, `not`) | a matching file contains it (with `not`: no matching file does) |
+| `files_changed` (`allow`, `forbid`, `min`, `max`) | the agent changed only allowed paths / none of the forbidden ones / that many files |
+| `tool_sequence` `names` (`mode`: `in_order` / `exact` / `any_order`) | the tool calls follow that sequence |
+| `budget` (`maxToolCalls`, `maxTurns`, `maxCostUsd`, `maxDurationMs`) | the run stayed within budget (usually `gate: false`) |
+| `command` | runs **in the workspace** (where hidden tests live), e.g. `cargo test` or `npm test` |
+| `judge` with `file:` | the judge grades a file the agent wrote instead of its reply |
+| *(automatic)* `tamper` | no protected file was modified |
+
+### Coding tasks from your own git history
+
+The most realistic coding-agent benchmark is your own repo. A commit that added a feature together with its tests becomes a task:
+
+```bash
+trialbench task-from-commit .. a1b2c3d --suite coding-agent
+#  → tasks/<id>/task.md        instruction: the commit message + the public API the tests import
+#  → tasks/<id>/hidden/        the commit's test files (the agent never sees them)
+#  → tasks/<id>/oracle.patch   the real change, as the reference solution
+#  → a case in suites/coding-agent.yaml: workspace at the commit's parent, graded by the hidden tests
+trialbench validate coding-agent    # reference must PASS, doing nothing must FAIL
+trialbench run coding-agent -k 3
+```
+
+`validate` catches broken tasks (the reference doesn't pass: wrong test command, missing fixture) and trivial ones (passes without any change: the tests don't check the feature). Run it whenever you add tasks. A case can point at its own reference solution with `metadata.oracle`.
+
 ---
 
 ## Reading the results
@@ -284,6 +345,48 @@ Every run writes `runs/<suite>/<runId>/`:
 - `trials.jsonl`: one line per trial with everything: input hash, output, tool calls, each grade with evidence, cost, duration.
 - `summary.json`: all the numbers above.
 - `report.md`: a Markdown report you can paste into a PR.
+
+
+---
+
+## Feeding results back into development
+
+Every run writes three things next to its records:
+
+| File | For |
+|---|---|
+| `report.md` | the numbers, for a PR or a ship decision |
+| `report.html` (`trialbench view <suite>`) | **reading traces**: every case and trial with input, output, each grade's evidence, tool calls and the workspace diff, filtered to failing and flaky cases |
+| `FEEDBACK.md` (`trialbench feedback <suite>`) | **what to fix**, written for a developer or a coding agent |
+
+`FEEDBACK.md` groups failures by **failure mode** (the grader that decided them), not case by case, and gives 2-3 concrete examples of each with input, output and evidence. It separates flaky cases (fail only sometimes: look for ambiguity) from consistent failures, lists what got worse or better than the baseline, and ends with instructions for whoever fixes it: fix root causes rather than cases, don't game the evals (no special-casing inputs, no editing tests or rubrics), keep what passes, then re-run and compare.
+
+The loop:
+
+```bash
+trialbench run my-suite -l before
+# hand runs/my-suite/<run>/FEEDBACK.md to Claude Code: "Fix what this report describes."
+trialbench run my-suite -l after
+trialbench compare my-suite          # paired, case by case: did it really help?
+trialbench gate my-suite --strict    # nothing that passed before is broken now
+```
+
+`compare` pairs the two runs on case ids, which removes case difficulty from the noise, and tells you whether B is significantly better or worse than A, which cases flipped, which graders moved, and how cost and speed changed. Use it for prompt versions, models (`SIFT_MODEL=sonnet …`), effort levels or code changes.
+
+## Can I trust the judge?
+
+An LLM judge is a measuring instrument, and an uncalibrated one can be confidently wrong. trialbench checks it against **your own labels**:
+
+```bash
+trialbench label my-suite faithful-summary      # local page: mark real outputs PASS/FAIL (keys P / F / S)
+trialbench judge-check faithful-summary         # judge vs your labels on dev and a held-out test split
+```
+
+- Labels go to `labels/<rubric>.jsonl` (commit them: they're your ground truth). Aim for ~100, about half PASS and half FAIL; 20 already tells you a lot.
+- Labels split deterministically into **train** (few-shot examples), **dev** (tune the rubric against it) and **test** (the honest score: don't tune against it).
+- `judge-check` reports TPR (catches real passes), TNR (catches real failures) and Cohen's κ, lists the disagreements with the judge's reasoning, and saves the result. A judge needs **TPR and TNR ≥ 80% on test** to be trusted for CI.
+- Once validated, every report shows the judge's pass rate **corrected for its measured error** (Rogan-Gladen with a confidence interval), and warns when the validation is stale because the rubric or judge model changed.
+- Try a cheaper judge: `trialbench judge-check faithful-summary -m claude-haiku-5-5`.
 
 ---
 
@@ -354,10 +457,17 @@ The statistics are exported too (`summarize`, `comparePaired`, `wilson`, `passAt
 | Command | Does |
 |---|---|
 | `trialbench init [dir]` | scaffold `evals/` (default) with a working example |
-| `trialbench run <suite>` | run a suite. `-k 3` trials, `-t tag1,tag2`, `--case id1,id2`, `-l label`, `-j 8` concurrency, `--no-judge`, `--no-cache`, `--resume <runId>`, `--min-pass 0.8` |
+| `trialbench run <suite>` | run a suite. `-k 3` trials, `-t tag1,tag2`, `--case id1,id2`, `-l label`, `-j 8` concurrency, `--no-judge`, `--no-cache`, `--resume <runId>`, `--keep-workspaces`, `--min-pass 0.8` |
 | `trialbench report <suite>` | re-print a run (latest by default, `-r <runId>`) |
 | `trialbench baseline <suite>` | store a run as the baseline (`-n name` for several) |
 | `trialbench gate <suite>` | CI check (`--min-pass`, `--strict`, `--alpha`, `-b name`) |
+| `trialbench feedback <suite>` | write `FEEDBACK.md`: failure modes with examples, changes vs baseline, instructions for the fixer |
+| `trialbench view <suite>` | open the HTML report with every trace |
+| `trialbench compare <suite> [runA] [runB]` | paired comparison of two runs (default: the two latest) |
+| `trialbench task-from-commit <repo> <commit>` | turn a commit with tests into a coding-agent task (`--suite`, `--tests`, `--test-cmd`) |
+| `trialbench validate <suite>` | reference solutions must pass, doing nothing must fail |
+| `trialbench label <suite> <rubric>` | label outputs in a local page (`--grader` for older runs) |
+| `trialbench judge-check <rubric>` | validate the judge against your labels (`-m model`, `--dev-only`) |
 | `trialbench list` | suites and their latest run |
 
 Global option: `-C <dir>`, the directory with `trialbench.config.yaml` (searched upward from there).
@@ -366,9 +476,11 @@ Global option: `-C <dir>`, the directory with `trialbench.config.yaml` (searched
 
 ## Roadmap
 
-- **Agents & coding agents:** headless Claude Code / Codex targets in a fresh workspace per trial, full transcript and tool-call capture, trajectory graders (exact / in-order / any-order / milestones), hidden tests the agent can't see or edit, tamper checks, per-trial budgets, Docker sandboxes, oracle and null-agent checks for every task.
-- **Trust:** `compare` for any two runs, a labeling page to collect human verdicts, judge validation (TPR/TNR/κ on a held-out split; judges below 0.8 can't gate), judge-error-corrected pass rates, an HTML report with a trace viewer for error analysis.
-- **Later:** OpenTelemetry export (Langfuse, Opik), synthetic case generation, fault injection, online sampling of production traffic.
+- **Optimization loop:** `trialbench improve`: let a coding agent iterate on a prompt or config against a suite, with a train/test split so it can't overfit, until a target or budget is reached.
+- **Sandboxes:** Docker / microVM isolation for agents that run arbitrary commands; network allowlists.
+- **More targets:** Codex CLI, OpenAI Agents SDK, and user simulators for multi-turn agents.
+- **Robustness:** prompt paraphrases and fault injection (tool timeouts, bad data) reported as a delta from clean runs.
+- **Later:** OpenTelemetry export (Langfuse, Opik), synthetic case generation, online sampling of production traffic.
 
 ## Background
 
