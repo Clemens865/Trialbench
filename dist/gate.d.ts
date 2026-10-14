@@ -21,10 +21,12 @@ export declare function baselinePath(config: Config, suite: string, name?: strin
 /** Run ids of a suite, newest first. */
 export declare function listRunIds(config: Config, suite: string): string[];
 export declare function latestRunId(config: Config, suite: string): string | undefined;
+/** Load a run; "id1,id2" pools several runs of the same suite into one (e.g. 5 + 10 trials). */
 export declare function loadRun(config: Config, suite: string, runId?: string): {
     runId: string;
     analysis: RunAnalysis;
     items: Map<string, number>;
+    graderHashes: Map<string, string>;
 };
 export declare function saveBaseline(config: Config, suite: string, runId: string | undefined, name?: string): {
     path: string;

@@ -70,7 +70,8 @@ describe("runSuite", () => {
 
   it("works with exec targets, including plain-text stdout and non-zero exits", async () => {
     const { config, suite } = setup({
-      target: { type: "exec", cmd: `node ${join(fixtures, "exec-target.mjs")}` },
+      // Generous timeout: spawning node can take >1s on a loaded machine (the suite default here is 1s).
+      target: { type: "exec", cmd: `node ${join(fixtures, "exec-target.mjs")}`, timeoutMs: 15_000 },
       cases: [
         { id: "json", input: "hi", graders: [{ type: "equals", value: "echo:hi" }] },
         { id: "plain", input: "plain", graders: [{ type: "contains", values: ["plain text"] }] },

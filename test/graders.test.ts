@@ -89,3 +89,25 @@ describe("combine", () => {
     expect(r.score).toBeCloseTo(0.75, 10);
   });
 });
+
+describe("grader overrides", async () => {
+  const { runSuite } = await import("../src/runner.js");
+  const { mkdtempSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  it("a case grader with the same id replaces the suite grader", async () => {
+    const root = mkdtempSync(join(tmpdir(), "tb-ovr-"));
+    const config = parseConfig({}, root);
+    const res = await runSuite(
+      {
+        suite: "o",
+        file: join(root, "o.yaml"),
+        target: { type: "noop" },
+        graders: [{ id: "len", type: "max_length", chars: 0 }, { type: "max_length", chars: 10 }],
+        cases: [{ id: "c", input: "x", graders: [{ id: "len", type: "max_length", chars: 5 }] }],
+      },
+      config,
+    );
+    expect(res.records[0]!.grades.map((g) => g.graderId)).toEqual(["max_length#0", "len"]);
+  });
+});

@@ -37,6 +37,21 @@ export function compileRegex(pattern, flags = "") {
     const body = inline ? pattern.slice(inline[0].length) : pattern;
     return new RegExp(body, [...new Set([...flags, ...(inline?.[1] ?? "")])].join(""));
 }
+/**
+ * The useful part of a failing test run: lines naming failures and assertions first
+ * (cargo, vitest/jest, pytest, go test), then the tail. Raw output starts with noise.
+ */
+export function failureSummary(out, code) {
+    const lines = out.split("\n").map((l) => l.trimEnd()).filter(Boolean);
+    const hot = /FAILED|FAIL\b|failed|panicked|assert|Error|error\[|expected|received|left:|right:|Traceback|✗|×/;
+    const picked = [];
+    for (const l of lines)
+        if (hot.test(l) && !picked.includes(l))
+            picked.push(l.slice(0, 300));
+    const tail = lines.slice(-4).filter((l) => !picked.includes(l));
+    const text = [`exit ${code}`, ...picked.slice(0, 25), ...(tail.length ? ["…", ...tail] : [])].join("\n");
+    return text.length > 2500 ? `${text.slice(0, 2500)}…` : text;
+}
 function needWorkspace(ctx) {
     if (!ctx.result.workspace)
         throw new Error("this grader needs a workspace: add `workspace:` to the suite");
@@ -125,7 +140,8 @@ async function gradeInner(spec, ctx) {
             });
             if (res.timedOut)
                 return { verdict: "ERROR", evidence: "command timed out" };
-            return binary(res.code === 0, clip((res.stdout + res.stderr).trim() || `exit ${res.code}`, 500));
+            const out = (res.stdout + "\n" + res.stderr).trim();
+            return binary(res.code === 0, res.code === 0 ? clip(out.split("\n").filter(Boolean).slice(-3).join(" ") || "exit 0", 300) : failureSummary(out, res.code));
         }
         case "file_exists": {
             const ws = needWorkspace(ctx);

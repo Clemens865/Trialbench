@@ -118,3 +118,8 @@ export interface CorrectedRate {
  * The raw judge rate is biased upward at low true rates and downward at high ones.
  */
 export declare function correctForJudge(passes: number, n: number, acc: Pick<JudgeAccuracy, "tpr" | "tnr" | "m1" | "m0">, z?: number): CorrectedRate;
+/**
+ * Two-sided Fisher exact test for a 2x2 table [[a, b], [c, d]]: e.g. passes/failures of all
+ * trials in run A vs run B. Useful for rare failures, where per-case comparisons lack power.
+ */
+export declare function fisherExact(a: number, b: number, c: number, d: number): number;

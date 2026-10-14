@@ -282,3 +282,22 @@ export function correctForJudge(passes, n, acc, z = Z95) {
     const half = (z * Math.sqrt((pT * (1 - pT)) / nT + ((1 - thetaT) ** 2 * q0 * (1 - q0)) / m0T + (thetaT ** 2 * q1 * (1 - q1)) / m1T)) / denom;
     return { raw, corrected, ci: { low: clip(thetaT - half), high: clip(thetaT + half) }, valid: true };
 }
+/**
+ * Two-sided Fisher exact test for a 2x2 table [[a, b], [c, d]]: e.g. passes/failures of all
+ * trials in run A vs run B. Useful for rare failures, where per-case comparisons lack power.
+ */
+export function fisherExact(a, b, c, d) {
+    const n = a + b + c + d;
+    const r1 = a + b;
+    const c1 = a + c;
+    const logC = (nn, kk) => logFactorial(nn) - logFactorial(kk) - logFactorial(nn - kk);
+    const p = (x) => Math.exp(logC(r1, x) + logC(n - r1, c1 - x) - logC(n, c1));
+    const observed = p(a);
+    let total = 0;
+    for (let x = Math.max(0, c1 - (n - r1)); x <= Math.min(r1, c1); x++) {
+        const px = p(x);
+        if (px <= observed * (1 + 1e-9))
+            total += px;
+    }
+    return Math.min(1, total);
+}

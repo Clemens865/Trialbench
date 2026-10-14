@@ -136,7 +136,9 @@ export async function runSuite(suite: Suite, config: Config, opts: RunOptions = 
   const records: TrialRecord[] = [...previous];
 
   await mapLimit(jobs, concurrency, async ({ c, trial }) => {
-    const graders: GraderSpec[] = [...(suite.graders ?? []), ...(c.graders ?? [])];
+    // A case grader with the same id replaces the suite-wide one (e.g. a looser length limit for one case).
+    const caseIds = new Set((c.graders ?? []).map((g) => g.id).filter(Boolean));
+    const graders: GraderSpec[] = [...(suite.graders ?? []).filter((g) => !g.id || !caseIds.has(g.id)), ...(c.graders ?? [])];
     const startedAt = new Date();
     let attempts = 0;
     let result: TargetResult | undefined;

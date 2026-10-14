@@ -260,7 +260,9 @@ async function callClaudeCode(target: ClaudeCodeTarget, request: TargetRequest, 
   const started = Date.now();
   const res = await runCommand(`claude ${args.join(" ")}`, {
     cwd,
-    env: { ...request.env, ...target.env, TRIALBENCH_WORKSPACE: cwd },
+    // Claude Code's default 8K output cap cuts off any agent that writes a large file in one step
+    // ("response exceeded the 8192 output token maximum"): that's a harness limit, not agent skill.
+    env: { CLAUDE_CODE_MAX_OUTPUT_TOKENS: "32000", ...request.env, ...target.env, TRIALBENCH_WORKSPACE: cwd },
     input: agentPrompt(target.prompt, request.input),
     timeoutMs,
   });
@@ -278,6 +280,9 @@ async function callClaudeCode(target: ClaudeCodeTarget, request: TargetRequest, 
   if (parsed.result === undefined && !parsed.subtype) {
     throw new InfraError(`claude CLI produced no result (exit ${res.code}): ${firstErrorLine(res.stderr || res.stdout)}`);
   }
+  // The API failed (overloaded, rate limit, output cap): retry instead of scoring the agent.
+  const finalText = parsed.result ?? "";
+  if (/^API Error:/.test(finalText.trim())) throw new InfraError(`claude API error after ${parsed.toolCalls.length} tool calls: ${finalText.trim().slice(0, 300)}`);
   return {
     output: parsed.result ?? parsed.assistantText.at(-1) ?? "",
     toolCalls: parsed.toolCalls,

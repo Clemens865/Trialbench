@@ -145,3 +145,12 @@ describe("judge correction", () => {
     expect(r.valid).toBe(false);
   });
 });
+
+describe("fisherExact", () => {
+  it("matches known values", async () => {
+    const { fisherExact } = await import("../src/stats.js");
+    expect(fisherExact(3, 1, 1, 3)).toBeCloseTo(0.4857, 3);
+    expect(fisherExact(10, 0, 0, 10)).toBeCloseTo(1.0825e-5, 8);
+    expect(fisherExact(33, 2, 35, 0)).toBeCloseTo(0.4928, 3);
+  });
+});

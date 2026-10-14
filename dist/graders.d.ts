@@ -129,6 +129,11 @@ export declare const isDeterministic: (g: GraderSpec) => g is {
 export declare function graderId(g: GraderSpec, index: number): string;
 /** RegExp that also accepts a leading Python/PCRE-style inline flag group like (?i) or (?is). */
 export declare function compileRegex(pattern: string, flags?: string): RegExp;
+/**
+ * The useful part of a failing test run: lines naming failures and assertions first
+ * (cargo, vitest/jest, pytest, go test), then the tail. Raw output starts with noise.
+ */
+export declare function failureSummary(out: string, code: number | null): string;
 export declare function grade(spec: GraderSpec, index: number, ctx: GradeContext): Promise<GradeResult>;
 /**
  * Combine grades into one trial verdict.

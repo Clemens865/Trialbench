@@ -101,6 +101,8 @@ export async function taskFromCommit(opts: TaskFromCommitOptions): Promise<TaskF
     apiLines(content).forEach((l) => apis.add(l));
     if ((await runCommand(`git cat-file -e ${parent}:${f}`, { cwd: repo })).code === 0) existedBefore.push(f);
   }
+  // Non-code files among the hidden tests (JSON, CSV, snapshots …) are fixtures the tests read.
+  const fixtures = testFiles.filter((f) => !/\.(rs|ts|tsx|js|mjs|cjs|py|go|java|kt|rb|php|cs|swift)$/.test(f));
   const exclude = testFiles.map((f) => `':(exclude)${f}'`).join(" ");
   writeFileSync(join(dir, "oracle.patch"), await git(repo, `diff --binary ${parent} ${commit} -- . ${exclude}`));
 
@@ -110,6 +112,7 @@ export async function taskFromCommit(opts: TaskFromCommitOptions): Promise<TaskF
     "\nImplement this in the repository. Hidden tests will check the behaviour afterwards.",
     apis.size ? `\nThe tests use this public API (it must exist and behave as described above):\n${[...apis].map((l) => `    ${l}`).join("\n")}` : "",
     `\nThe tests will be run with: ${testCmd}`,
+    fixtures.length ? `Test fixtures the tests read are provided with the tests and will be in place when they run (${fixtures.join(", ")}); you don't need to create or regenerate them.` : "",
     existedBefore.length ? `\nDo not modify these existing test files: ${existedBefore.join(", ")}.` : "",
     "Run the build and the existing tests yourself before you finish.",
   ]

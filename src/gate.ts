@@ -36,16 +36,27 @@ export function latestRunId(config: Config, suite: string): string | undefined {
   return listRunIds(config, suite)[0];
 }
 
-export function loadRun(config: Config, suite: string, runId?: string): { runId: string; analysis: RunAnalysis; items: Map<string, number> } {
+/** Load a run; "id1,id2" pools several runs of the same suite into one (e.g. 5 + 10 trials). */
+export function loadRun(
+  config: Config,
+  suite: string,
+  runId?: string,
+): { runId: string; analysis: RunAnalysis; items: Map<string, number>; graderHashes: Map<string, string> } {
   const id = runId ?? latestRunId(config, suite);
   if (!id) throw new Error(`No runs found for suite "${suite}" in ${config.runsDir}. Run \`trialbench run ${suite}\` first.`);
-  const dir = runDirFor(config, suite, id);
-  if (!existsSync(join(dir, "meta.json"))) throw new Error(`Run ${id} not found in ${dir}`);
-  const records = readTrials(dir);
-  const analysis = analyze(readMeta(dir), records);
+  const ids = id.split(",").map((s) => s.trim()).filter(Boolean);
+  const records = ids.flatMap((rid, k) => {
+    const dir = runDirFor(config, suite, rid);
+    if (!existsSync(join(dir, "meta.json"))) throw new Error(`Run ${rid} not found in ${dir}`);
+    // Keep trials distinct when pooling: trial numbers continue across runs.
+    return readTrials(dir).map((r) => ({ ...r, trial: r.trial + k * 1000 }));
+  });
+  const meta = readMeta(runDirFor(config, suite, ids[0]!));
+  const analysis = analyze(ids.length > 1 ? { ...meta, runId: ids.join("+"), label: `${ids.length} runs pooled` } : meta, records);
   const items = new Map<string, number>();
   for (const [caseId, it] of perItemScores(records)) if (it.scores.length) items.set(caseId, mean(it.scores));
-  return { runId: id, analysis, items };
+  const graderHashes = new Map(records.map((r) => [r.caseId, r.hashes.graders]));
+  return { runId: id, analysis, items, graderHashes };
 }
 
 export function saveBaseline(config: Config, suite: string, runId: string | undefined, name = "main"): { path: string; baseline: Baseline } {

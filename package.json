@@ -1,6 +1,6 @@
 {
   "name": "trialbench",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Statistically honest evals for LLM features, tool-using agents and coding agents",
   "main": "dist/index.js",
   "scripts": {
